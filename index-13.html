@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How a Test Item Is Engineered</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400;1,500;1,600&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  /* PROJECTION-TUNED: brighter text, stronger gold, higher-contrast body copy */
+  --gold: #d4b675;          /* brightened from c8a96e for projector wash */
+  --gold-dim: #a08850;      /* lifted from 8a7248 so labels survive projection */
+  --gold-bright: #ecd79a;
+  --dark: #0d0b07;
+  --card: #1c1810;          /* slightly lifted panel */
+  --border: #342c1c;        /* brighter border so edges read */
+  --text: #f6f0e2;          /* near-white for max legibility */
+  --dim: #c2b8a4;           /* lifted from 9a9080 — body copy now readable from back row */
+  --muted: #79705e;         /* lifted from 5a5040 — chrome still visible */
+  --red: #e08474;
+  --red-bg: #20100c;
+  --green: #6fc296;
+  --green-bg: #0a2014;
+  --serif: 'Cormorant Garamond', Georgia, serif;
+  --sans: 'DM Sans', system-ui, sans-serif;
+}
+
+html, body { width: 100%; height: 100%; background: var(--dark); color: var(--text); font-family: var(--sans); overflow: hidden; }
+
+/* GRAIN — kept subtle so it never muddies projected text */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  opacity: 0.22; pointer-events: none; z-index: 0;
+}
+
+/* PROGRESS */
+#progress { position: fixed; top: 0; left: 0; height: 3px; background: var(--gold); transition: width 0.4s ease; z-index: 200; box-shadow: 0 0 8px rgba(212,182,117,.5); }
+
+/* CHROME */
+.chrome-left { position: fixed; top: 26px; left: 38px; font-size: 11px; letter-spacing: 4px; color: var(--muted); text-transform: uppercase; z-index: 100; }
+.chrome-right { position: fixed; top: 26px; right: 38px; font-size: 11px; letter-spacing: 4px; color: var(--muted); text-transform: uppercase; z-index: 100; }
+#counter { position: fixed; bottom: 18px; right: 38px; font-size: 12px; letter-spacing: 3px; color: var(--muted); z-index: 100; }
+#hint { position: fixed; bottom: 18px; left: 38px; font-size: 11px; letter-spacing: 2px; color: var(--muted); z-index: 100; }
+
+/* DOTS */
+#dots { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; z-index: 100; flex-wrap: wrap; max-width: 60%; justify-content: center; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); cursor: pointer; transition: background 0.3s; opacity: .55; }
+.dot.active { background: var(--gold); opacity: 1; }
+.dot.section { background: var(--border); width: 1px; height: 6px; border-radius: 0; cursor: default; opacity: 1; }
+
+/* SLIDES */
+.slide { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 76px 84px 86px; opacity: 0; pointer-events: none; transition: opacity 0.4s ease; z-index: 1; }
+.slide.active { opacity: 1; pointer-events: all; z-index: 2; }
+
+/* ——— SECTION / DIVIDER TITLE ——— */
+.sec-wrap { text-align: center; }
+.sec-tag { font-size: 12px; letter-spacing: 6px; color: var(--gold-dim); text-transform: uppercase; margin-bottom: 44px; }
+.sec-num { font-family: var(--serif); font-size: 190px; font-weight: 300; color: var(--border); line-height: 0.85; margin-bottom: 24px; position: relative; }
+.sec-num::after { content: ''; position: absolute; bottom: -12px; left: 50%; transform: translateX(-50%); width: 56px; height: 1px; background: var(--gold); }
+.sec-title { font-family: var(--serif); font-size: 56px; font-weight: 300; color: var(--text); margin-top: 34px; line-height: 1.1; }
+.sec-title em { color: var(--gold); font-style: italic; }
+.sec-sub { font-size: 14px; color: var(--dim); letter-spacing: 2px; text-transform: uppercase; margin-top: 18px; }
+
+/* ——— TEACHING SLIDE (theory beats) ——— */
+.teach-kicker { font-size: 12px; letter-spacing: 5px; color: var(--gold-dim); text-transform: uppercase; margin-bottom: 28px; }
+.teach-h { font-family: var(--serif); font-size: 58px; font-weight: 300; line-height: 1.15; color: var(--text); max-width: 1000px; text-align: center; }
+.teach-h em { color: var(--gold); font-style: italic; }
+.teach-sub { font-family: var(--serif); font-size: 26px; font-style: italic; color: var(--dim); margin-top: 28px; max-width: 820px; text-align: center; line-height: 1.5; }
+.teach-sub strong { color: var(--gold); font-style: normal; font-weight: 400; }
+
+/* Four-skills grid */
+.skills-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 880px; width: 100%; margin-top: 44px; }
+.skill-cell { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 26px 30px; }
+.skill-cell .sc-tag { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); margin-bottom: 12px; }
+.skill-cell .sc-pair { font-family: var(--serif); font-size: 32px; color: var(--text); font-weight: 300; }
+.skill-cell .sc-pair em { color: var(--gold); font-style: italic; }
+.skill-cell .sc-note { font-size: 14px; color: var(--dim); margin-top: 10px; line-height: 1.6; }
+.skill-cell.in { border-left: 2px solid var(--gold); }
+.skill-cell.out { border-left: 2px solid var(--green); }
+
+/* Bucket visual */
+.bucket-stage { display: flex; align-items: center; gap: 60px; margin-top: 36px; flex-wrap: wrap; justify-content: center; }
+.bucket-svg { flex-shrink: 0; }
+.bucket-words { max-width: 460px; }
+.bucket-words .bw-line { font-family: var(--serif); font-size: 28px; color: var(--text); line-height: 1.5; font-weight: 300; }
+.bucket-words .bw-line em { color: var(--gold); font-style: italic; }
+.bucket-words .bw-flow { font-size: 16px; color: var(--dim); margin-top: 18px; line-height: 1.7; }
+.bucket-words .bw-flow strong { color: var(--gold-bright); }
+
+/* The Turn (designer reveal) */
+.turn-rule { width: 60px; height: 1px; background: var(--gold); margin: 30px auto; }
+.turn-list { max-width: 760px; margin-top: 8px; }
+.turn-item { font-family: var(--serif); font-size: 26px; font-weight: 300; color: var(--text); line-height: 1.5; text-align: center; margin-bottom: 14px; }
+.turn-item em { color: var(--gold); font-style: italic; }
+.turn-punch { font-family: var(--serif); font-size: 22px; font-style: italic; color: var(--gold-bright); margin-top: 28px; text-align: center; }
+
+/* ——— GAUNTLET (verbals challenge) ——— */
+.ga-label { font-size: 12px; letter-spacing: 5px; color: var(--gold-dim); text-transform: uppercase; margin-bottom: 30px; align-self: flex-start; }
+.ga-num { font-family: var(--serif); font-size: 80px; color: var(--border); line-height: 1; position: absolute; top: 64px; left: 84px; font-weight: 300; }
+.ga-sentence { font-family: var(--serif); font-size: 42px; font-weight: 300; line-height: 1.5; color: var(--text); max-width: 1000px; text-align: left; align-self: flex-start; border-left: 2px solid var(--gold); padding-left: 30px; }
+.ga-sentence .bait { color: var(--gold); font-style: italic; }
+.ga-q { font-size: 16px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim); margin-top: 34px; align-self: flex-start; }
+
+.ga-btn { display: inline-block; margin-top: 30px; align-self: flex-start; padding: 13px 30px; background: transparent; border: 1px solid var(--gold-dim); border-radius: 5px; color: var(--gold); font-size: 12px; letter-spacing: 3px; text-transform: uppercase; cursor: pointer; transition: all 0.2s; }
+.ga-btn:hover { background: var(--gold-dim); color: var(--dark); }
+
+.ga-reveal { background: var(--card); border: 1px solid var(--border); border-left: 2px solid var(--gold); border-radius: 8px; padding: 24px 30px; max-width: 1000px; width: 100%; margin-top: 26px; align-self: flex-start; display: none; }
+.ga-reveal.show { display: block; animation: slideUp 0.35s ease; }
+.ga-rrow { display: flex; gap: 40px; margin-bottom: 16px; flex-wrap: wrap; }
+.ga-rcol .rc-tag { font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--gold-dim); margin-bottom: 6px; }
+.ga-rcol .rc-bait { font-family: var(--serif); font-size: 26px; color: var(--red); font-style: italic; }
+.ga-rcol .rc-verb { font-family: var(--serif); font-size: 26px; color: var(--green); }
+.ga-rtext { font-size: 16px; line-height: 1.75; color: var(--dim); border-top: 1px solid var(--border); padding-top: 16px; }
+.ga-rtext strong { color: var(--text); }
+.ga-rtext em { color: var(--gold); font-style: italic; }
+
+/* ——— THE OATH ——— */
+.oath-kicker { font-size: 12px; letter-spacing: 5px; color: var(--gold-dim); text-transform: uppercase; margin-bottom: 24px; }
+.oath-h { font-family: var(--serif); font-size: 52px; font-weight: 300; color: var(--text); text-align: center; line-height: 1.1; }
+.oath-h em { color: var(--gold); font-style: italic; }
+.oath-soldiers { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 40px; max-width: 900px; margin-top: 40px; width: 100%; }
+.soldier { display: flex; align-items: baseline; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.soldier .s-n { font-family: var(--serif); font-size: 30px; color: var(--gold-dim); min-width: 30px; font-weight: 300; }
+.soldier .s-name { font-family: var(--serif); font-size: 24px; color: var(--text); font-weight: 400; }
+.soldier .s-ex { font-size: 16px; color: var(--gold); font-style: italic; margin-left: 8px; }
+.oath-chant { font-family: var(--serif); font-size: 30px; font-style: italic; color: var(--gold-bright); text-align: center; margin-top: 44px; line-height: 1.5; max-width: 760px; }
+.oath-law { background: var(--card); border: 1px solid var(--border); border-left: 2px solid var(--gold); border-radius: 8px; padding: 22px 30px; margin-top: 36px; max-width: 860px; }
+.oath-law .ol-tag { font-size: 10px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold-dim); margin-bottom: 10px; }
+.oath-law .ol-text { font-size: 18px; line-height: 1.7; color: var(--dim); }
+.oath-law .ol-text strong { color: var(--text); }
+.oath-law .ol-text em { color: var(--gold); font-style: italic; }
+
+/* commander vs soldier visual */
+.cmd-row { display: flex; gap: 24px; margin-top: 36px; max-width: 900px; width: 100%; }
+.cmd-card { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 24px 28px; text-align: center; }
+.cmd-card.soldier-c { border-top: 2px solid var(--red); }
+.cmd-card.commander-c { border-top: 2px solid var(--green); }
+.cmd-card .cc-tag { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 12px; }
+.cmd-card.soldier-c .cc-tag { color: var(--red); }
+.cmd-card.commander-c .cc-tag { color: var(--green); }
+.cmd-card .cc-line { font-family: var(--serif); font-size: 22px; color: var(--text); font-weight: 300; line-height: 1.4; }
+.cmd-card .cc-sub { font-size: 14px; color: var(--dim); margin-top: 10px; }
+
+/* ——— EXAM QUESTION (Challenge 2 MCQs) ——— */
+.eq-label { font-size: 12px; letter-spacing: 5px; color: var(--gold-dim); text-transform: uppercase; margin-bottom: 32px; align-self: flex-start; }
+.eq-stem { font-family: var(--serif); font-size: 38px; font-weight: 300; line-height: 1.5; color: var(--text); max-width: 920px; margin-bottom: 32px; align-self: flex-start; border-left: 2px solid var(--gold); padding-left: 30px; }
+.eq-stem .blank { color: var(--gold); font-style: italic; border-bottom: 1px solid var(--gold-dim); padding: 0 14px; display: inline-block; }
+.eq-stem .bait { color: var(--gold); font-style: italic; }
+
+.eq-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; max-width: 920px; }
+.eq-opt { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 16px 22px; display: flex; align-items: center; gap: 16px; font-size: 18px; transition: all 0.25s; cursor: pointer; }
+.eq-opt:hover:not(.revealed) { border-color: var(--gold-dim); }
+.eq-opt .ok { font-family: var(--serif); font-size: 26px; color: var(--gold-dim); min-width: 26px; font-weight: 300; }
+.eq-opt .ov { color: var(--text); }
+.eq-opt.correct { border-color: var(--green); background: var(--green-bg); }
+.eq-opt.correct .ok, .eq-opt.correct .ov { color: var(--green); }
+.eq-opt.wrong { border-color: #3a1a14; background: var(--red-bg); opacity: 0.55; }
+.eq-opt.wrong .ok { color: var(--red); }
+.eq-opt.wrong .ov { color: #b08878; }
+
+.eq-analysis { background: var(--card); border: 1px solid var(--border); border-left: 2px solid var(--gold); border-radius: 6px; padding: 20px 26px; width: 100%; max-width: 920px; margin-top: 16px; display: none; }
+.eq-analysis.show { display: block; animation: slideUp 0.35s ease; }
+.eq-alabel { font-size: 10px; letter-spacing: 4px; text-transform: uppercase; color: var(--gold-dim); margin-bottom: 10px; }
+.eq-atext { font-size: 16px; line-height: 1.75; color: var(--dim); }
+.eq-atext strong { color: var(--text); }
+.eq-atext em { color: var(--gold); font-style: italic; }
+
+.eq-btn { display: none; margin-top: 18px; align-self: flex-start; padding: 13px 30px; background: transparent; border: 1px solid var(--gold-dim); border-radius: 5px; color: var(--gold); font-size: 12px; letter-spacing: 3px; text-transform: uppercase; cursor: pointer; transition: all 0.2s; }
+.eq-btn:hover { background: var(--gold-dim); color: var(--dark); }
+.eq-btn.show { display: inline-block; }
+
+/* ——— GAME ——— */
+.game-label { font-size: 12px; letter-spacing: 5px; color: var(--gold-dim); text-transform: uppercase; margin-bottom: 18px; align-self: flex-start; }
+.game-num { font-family: var(--serif); font-size: 80px; color: var(--border); line-height: 1; position: absolute; top: 64px; left: 84px; font-weight: 300; }
+.game-sentence { font-family: var(--serif); font-size: 44px; font-weight: 300; line-height: 1.5; color: var(--text); max-width: 960px; text-align: center; margin-bottom: 48px; }
+.game-sentence em { color: var(--gold); font-style: italic; }
+
+.verdict-row { display: flex; gap: 28px; margin-bottom: 32px; }
+.vbtn { padding: 20px 52px; border-radius: 6px; font-size: 14px; font-weight: 600; letter-spacing: 4px; text-transform: uppercase; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; }
+.vbtn-correct { background: var(--green-bg); border-color: var(--green); color: var(--green); }
+.vbtn-correct:hover { background: var(--green); color: var(--dark); }
+.vbtn-incorrect { background: var(--red-bg); border-color: var(--red); color: var(--red); }
+.vbtn-incorrect:hover { background: var(--red); color: var(--dark); }
+.vbtn:disabled { cursor: default; }
+
+.reveal-panel { width: 100%; max-width: 900px; display: none; }
+.reveal-panel.show { display: block; animation: slideUp 0.35s ease; }
+@keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+.reveal-verdict { font-family: var(--serif); font-size: 40px; font-weight: 300; margin-bottom: 16px; }
+.reveal-verdict.v-correct { color: var(--green); }
+.reveal-verdict.v-wrong { color: var(--red); }
+.reveal-trap { font-size: 16px; line-height: 1.8; color: var(--dim); border-left: 2px solid var(--gold); padding-left: 20px; }
+.reveal-trap strong { color: var(--text); }
+.reveal-trap em { color: var(--gold); font-style: italic; }
+
+/* SCORE BADGE */
+.score-badge { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--gold-dim); border-radius: 20px; padding: 6px 20px; font-size: 12px; letter-spacing: 3px; color: var(--gold); z-index: 100; display: none; }
+.score-badge.show { display: block; }
+
+/* RESULT */
+.result-wrap { text-align: center; }
+.result-score { font-family: var(--serif); font-size: 130px; font-weight: 300; color: var(--gold); line-height: 1; }
+.result-denom { font-family: var(--serif); font-size: 44px; color: var(--dim); }
+.result-label { font-size: 12px; letter-spacing: 4px; text-transform: uppercase; color: var(--muted); margin-top: 12px; margin-bottom: 40px; }
+.result-msg { font-family: var(--serif); font-size: 30px; font-weight: 300; font-style: italic; color: var(--text); max-width: 640px; line-height: 1.5; }
+.result-msg em { color: var(--gold); }
+
+/* DIVIDER */
+.divider-slide { text-align: center; }
+.div-ornament { font-family: var(--serif); font-size: 16px; color: var(--gold); letter-spacing: 8px; margin-bottom: 38px; }
+.div-title { font-family: var(--serif); font-size: 88px; font-weight: 300; color: var(--text); line-height: 1; }
+.div-title em { color: var(--gold); font-style: italic; }
+.div-sub { font-size: 13px; letter-spacing: 4px; color: var(--dim); text-transform: uppercase; margin-top: 22px; }
+.div-rule { font-size: 16px; color: var(--gold-dim); margin-top: 32px; font-family: var(--serif); font-style: italic; }
+
+/* ——— SPEAKER NOTES OVERLAY (press N) — never visible unless you summon it ——— */
+#notes { position: fixed; inset: 0; background: rgba(8,6,4,.97); z-index: 500; display: none; padding: 60px 80px; overflow-y: auto; }
+#notes.show { display: block; }
+#notes .n-head { font-size: 12px; letter-spacing: 5px; text-transform: uppercase; color: var(--gold); margin-bottom: 8px; }
+#notes .n-slidetitle { font-family: var(--serif); font-size: 32px; color: var(--text); margin-bottom: 28px; font-weight: 300; }
+#notes .n-body { font-size: 19px; line-height: 1.85; color: var(--dim); max-width: 900px; }
+#notes .n-body strong { color: var(--text); }
+#notes .n-body em { color: var(--gold); font-style: italic; }
+#notes .n-body .cue { display: inline-block; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--gold-dim); border: 1px solid var(--border); border-radius: 4px; padding: 2px 10px; margin-right: 8px; }
+#notes .n-foot { position: fixed; bottom: 28px; left: 80px; font-size: 12px; letter-spacing: 2px; color: var(--muted); }
+#notes .n-section { color: var(--gold-bright); font-family: var(--serif); font-style: italic; }
+
+/* RESPONSIVE — keeps it legible if projected on a 16:10 or laptop preview */
+@media (max-width: 1100px) {
+  .slide { padding: 64px 48px 76px; }
+  .teach-h { font-size: 46px; }
+  .ga-sentence, .eq-stem { font-size: 32px; }
+  .game-sentence { font-size: 34px; }
+  .eq-opts, .skills-grid, .oath-soldiers { grid-template-columns: 1fr; }
+  .cmd-row { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+
+<div id="progress"></div>
+<div class="chrome-left">ALİHOCA.İNGLİZCE</div>
+<div class="chrome-right">GAZİ ANADOLU LİSESİ · 04.06.2026</div>
+<div id="hint">← → SPACE · &nbsp;N = NOTES</div>
+<div id="counter"></div>
+<div id="dots"></div>
+<div class="score-badge" id="scoreBadge"></div>
+
+<!-- ════════════════════════════════════════════════════════════
+     PART 0 — THE OPEN  (warm-up + theory; you carry these live)
+     ════════════════════════════════════════════════════════════ -->
+
+<!-- SLIDE 1 — COVER / WARM OPEN -->
+<div class="slide active" id="s1"
+  data-note-title="The Warm Open — Ice Cream, Names, Love"
+  data-note-section="PART 0 · BELONGING"
+  data-note="<span class='cue'>walk in</span> Big energy. Smile. Do NOT start with the slide — start with <em>them</em>.<br><br><strong>Q1:</strong> 'Do you love ice cream?' <span class='cue'>hands</span><br><strong>Q2:</strong> 'Which flavour?' — point at 3–4 students, <em>ask their names</em>, repeat the name back ('Çikolata, Mehmet — good taste'). This is the belonging hook. Use the names again later.<br><br>Then: <strong>'Who loves English? Hands up.'</strong> <span class='cue'>hands</span> 'Awesome.'<br><br>The turn: <em>'As long as English is your love — what are you doing for it? How do you look after it?'</em> Point at 2–3 students, listen, nod, don't correct. Let it sit. Then move to the bucket.">
+  <div class="sec-wrap">
+    <div class="sec-tag">GAZİ ANADOLU LİSESİ · 04 HAZİRAN 2026</div>
+    <div class="teach-h">How a Test Item<br>Is <em>Engineered.</em></div>
+    <div class="teach-sub">Ali Salmasi · MA · Cambridge CELTA · 25+ Years</div>
+  </div>
+</div>
+
+<!-- SLIDE 2 — FOUR SKILLS -->
+<div class="slide" id="s2"
+  data-note-title="The Four Skills — Input & Output"
+  data-note-section="PART 0 · THEORY"
+  data-note="<strong>The frame:</strong> Language lives on two channels. <em>Receptive</em> (you take in) and <em>productive</em> (you give out).<br><br>Reading + Listening = <strong>INPUT</strong>. Writing + Speaking = <strong>OUTPUT</strong>.<br><br>Key line: <em>'You cannot give out what you never took in. Output is the echo of input.'</em><br><br>Set this up — it's the runway for the bucket. Don't linger; the bucket is the payoff.">
+  <div class="teach-kicker">The Engine of a Learner</div>
+  <div class="teach-h">Four Skills. <em>Two Directions.</em></div>
+  <div class="skills-grid">
+    <div class="skill-cell in"><div class="sc-tag">Receptive · Input</div><div class="sc-pair">Reading</div><div class="sc-note">You take meaning in.</div></div>
+    <div class="skill-cell in"><div class="sc-tag">Receptive · Input</div><div class="sc-pair">Listening</div><div class="sc-note">You take sound in.</div></div>
+    <div class="skill-cell out"><div class="sc-tag">Productive · Output</div><div class="sc-pair">Writing</div><div class="sc-note">You give structure out.</div></div>
+    <div class="skill-cell out"><div class="sc-tag">Productive · Output</div><div class="sc-pair">Speaking</div><div class="sc-note">You give voice out.</div></div>
+  </div>
+  <div class="teach-sub">You cannot give out what you never took in. <strong>Output is the echo of input.</strong></div>
+</div>
+
+<!-- SLIDE 3 — BUCKET THEORY -->
+<div class="slide" id="s3"
+  data-note-title="Bucket Theory — Fill, then Overflow"
+  data-note-section="PART 0 · THEORY"
+  data-note="<strong>The big metaphor.</strong> Make it physical with your hands.<br><br><em>'Imagine a bucket in your mind. First you must FILL it — through input. Reading, listening, every day.'</em><br><br><span class='cue'>ask them</span> 'And when the bucket gets full, it automatically starts… what?' — let them answer: <strong>OVERFLOWING.</strong><br><br><em>'You don't even know when it happens. You open your mouth and the words flow out — like licking an ice cream.'</em> (Callback to the open.)<br><br>This is why drilling output on an empty bucket fails. Fill first.">
+  <div class="teach-kicker">Bucket Theory</div>
+  <div class="bucket-stage">
+    <svg class="bucket-svg" width="220" height="260" viewBox="0 0 220 260" xmlns="http://www.w3.org/2000/svg">
+      <!-- overflow drops -->
+      <circle cx="58" cy="92" r="5" fill="#d4b675"/>
+      <circle cx="50" cy="112" r="4" fill="#d4b675" opacity="0.8"/>
+      <circle cx="162" cy="92" r="5" fill="#d4b675"/>
+      <circle cx="170" cy="114" r="4" fill="#d4b675" opacity="0.8"/>
+      <!-- bucket body -->
+      <path d="M52 96 L168 96 L156 244 L64 244 Z" fill="none" stroke="#a08850" stroke-width="2.5"/>
+      <!-- fill level -->
+      <path d="M56.5 132 L163.5 132 L156 244 L64 244 Z" fill="#d4b675" opacity="0.18"/>
+      <line x1="56.5" y1="132" x2="163.5" y2="132" stroke="#d4b675" stroke-width="2"/>
+      <!-- rim -->
+      <ellipse cx="110" cy="96" rx="58" ry="11" fill="none" stroke="#d4b675" stroke-width="2.5"/>
+      <!-- input arrows -->
+      <line x1="110" y1="30" x2="110" y2="78" stroke="#6fc296" stroke-width="2.5"/>
+      <path d="M104 70 L110 80 L116 70" fill="none" stroke="#6fc296" stroke-width="2.5"/>
+      <text x="110" y="22" text-anchor="middle" fill="#6fc296" font-family="DM Sans" font-size="11" letter-spacing="2">INPUT</text>
+    </svg>
+    <div class="bucket-words">
+      <div class="bw-line">Fill it through <em>input.</em><br>When it is full, it <em>overflows.</em></div>
+      <div class="bw-flow">You will not feel the moment it happens. You open your mouth — and the words <strong>flow out like licking an ice cream.</strong></div>
+    </div>
+  </div>
+</div>
+
+<!-- SLIDE 4 — IMMERSION -->
+<div class="slide" id="s4"
+  data-note-title="Immersion — Living Inside the Language"
+  data-note-section="PART 0 · THEORY"
+  data-note="<strong>How do you fill the bucket fastest? Immersion.</strong><br><br><em>'Stop visiting English like a tourist. Move in. Live inside it.'</em><br><br>Concrete moves: phone in English, series with English subs (not Turkish), shadow what you hear, think in English while walking. <em>'You don't study a language into your bones. You soak in it.'</em><br><br>Then the pivot line to the whole second half: <em>'Once your general English is shaped this way — there is still one more wall. The exam.'</em>">
+  <div class="teach-kicker">The Fastest Fill</div>
+  <div class="teach-h">Stop visiting English<br>like a tourist. <em>Move in.</em></div>
+  <div class="teach-sub">Phone, screen, music, the voice in your head — soak the bucket every hour, not once a week. <strong>You don't study a language into your bones. You soak in it.</strong></div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     PART I — THE TURN  (think like a designer)
+     ════════════════════════════════════════════════════════════ -->
+
+<!-- SLIDE 5 — THE TURN / DESIGNER REVEAL -->
+<div class="slide" id="s5"
+  data-note-title="The Turn — Think Like a Test Designer"
+  data-note-section="PART I · THE TURN"
+  data-note="<strong>Tone shift. Lower the voice. Lean in. This is theatre.</strong><br><br><em>'Your general English is shaped. Now you must decipher exam CODES. And to break a code, you must think like the person who BUILT it.'</em><br><br><em>'I have been designing test items for over twenty years. Today I am here to reveal our tricks.'</em><br><br><span class='cue'>the joke</span> <em>'We test designers are mischievous. When you fall into our traps, we start laughing.'</em> … beat … <em>'I'm joking.'</em> (Let them laugh.)<br><br>Then serious: <em>'We ALWAYS leave a signal to help you find the answer. But we camouflage it — under leaves, under bushes — so cunningly you cannot find it. Otherwise the test would be easy-peasy. Today: learn to see the signal.'</em>">
+  <div class="sec-wrap">
+    <div class="sec-tag">Part I</div>
+    <div class="teach-h">I Build the Traps.<br>Today I <em>Reveal Them.</em></div>
+    <div class="turn-rule"></div>
+    <div class="turn-list">
+      <div class="turn-item">We always leave a <em>signal</em> to help you.</div>
+      <div class="turn-item">Then we <em>camouflage</em> it — under leaves, under bushes.</div>
+    </div>
+    <div class="turn-punch">"Find the signal, and the trap becomes a gift."</div>
+  </div>
+</div>
+
+<!-- SLIDE 6 — GAUNTLET DIVIDER -->
+<div class="slide" id="s6"
+  data-note-title="Gauntlet — Setup & Rules"
+  data-note-section="CHALLENGE 1 · THE GAUNTLET"
+  data-note="<strong>Set the rules clearly before sentence 1:</strong><br><br><em>'On the screen: one academic sentence. One question — what is the TENSE-CARRYING verb? Not any verb. The verb that holds the TIME of the sentence.'</em><br><br><span class='cue'>volunteer</span> 'I need ONE brave volunteer to stand. Answer out loud. Correct — we move on. Not correct — no problem, another volunteer stands.'<br><br>Don't reveal the trap names yet. That's the Oath, after. Right now just let them feel the difficulty — the verb-shaped soldiers will fool most of them. That confusion is the SETUP for the Oath payoff.">
+  <div class="divider-slide">
+    <div class="div-ornament">— ◆ —</div>
+    <div class="div-title">The <em>Gauntlet.</em></div>
+    <div class="div-sub">Challenge I · 6 Sentences · Stand & Answer</div>
+    <div class="div-rule">One question, every time: which word or phrase is the finite commander?</div>
+  </div>
+</div>
+
+<!-- GAUNTLET SENTENCES (s7–s12) -->
+
+<!-- G1 -->
+<div class="slide" id="s7"
+  data-note-title="Gauntlet 01 — Reduced relative"
+  data-note-section="CHALLENGE 1"
+  data-note="Bait: <em>appointed</em> (past participle, looks like the verb). Real finite verb: <strong>has published</strong> (here: has NOT published).<br><br>If they say 'appointed' — that's the trap working. <span class='cue'>reveal</span> Press → to show the answer panel, then say the reveal line on the card.">
+  <div class="ga-num">01</div>
+  <div class="ga-label">Challenge I · The Gauntlet</div>
+  <div class="ga-sentence">The committee <span class="bait">appointed</span> to investigate the allegations has not yet published its findings.</div>
+  <div class="ga-q">Find the commander — the finite verb or verb phrase.</div>
+  <button class="ga-btn" onclick="revealGa(1)">Reveal the Commander →</button>
+  <div class="ga-reveal" id="ga1">
+    <div class="ga-rrow">
+      <div class="ga-rcol"><div class="rc-tag">The Soldier (bait)</div><div class="rc-bait">appointed</div></div>
+      <div class="ga-rcol"><div class="rc-tag">The Commander (tense)</div><div class="rc-verb">has … published</div></div>
+    </div>
+    <div class="ga-rtext"><strong>appointed</strong> is a reduced relative — <em>who was appointed</em>. It only describes the committee. The time of the sentence lives in <em>has (not yet) published.</em></div>
+  </div>
+</div>
+
+<!-- G2 -->
+<div class="slide" id="s8"
+  data-note-title="Gauntlet 02 — Participle as subject-modifier"
+  data-note-section="CHALLENGE 1"
+  data-note="Bait: <em>examining</em> (present participle, smells like a verb). Real finite verb: <strong>reveal</strong>.<br><br>Watch for 'examining' OR even 'deprivation'. The commander is the plural <em>reveal</em>, agreeing with <em>Studies</em>.">
+  <div class="ga-num">02</div>
+  <div class="ga-label">Challenge I · The Gauntlet</div>
+  <div class="ga-sentence">Studies <span class="bait">examining</span> the long-term effects of sleep deprivation reveal a sharp decline in cognitive performance.</div>
+  <div class="ga-q">Find the commander — the finite verb or verb phrase.</div>
+  <button class="ga-btn" onclick="revealGa(2)">Reveal the Commander →</button>
+  <div class="ga-reveal" id="ga2">
+    <div class="ga-rrow">
+      <div class="ga-rcol"><div class="rc-tag">The Soldier (bait)</div><div class="rc-bait">examining</div></div>
+      <div class="ga-rcol"><div class="rc-tag">The Commander (tense)</div><div class="rc-verb">reveal</div></div>
+    </div>
+    <div class="ga-rtext"><strong>examining</strong> is a verbal — <em>that examine</em>. It describes the studies. The tense-carrying commander is <em>reveal</em>, agreeing with <em>Studies.</em></div>
+  </div>
+</div>
+
+<!-- G3 -->
+<div class="slide" id="s9"
+  data-note-title="Gauntlet 03 — Two stacked verbals"
+  data-note-section="CHALLENGE 1"
+  data-note="TWO soldiers in disguise: <em>Having reviewed</em> (perfect participle) AND <em>presented</em> (reduced relative). Real finite verb: <strong>reached</strong>.<br><br>This is the hardest so far — most will name one of the two participles. Celebrate whoever finds <em>reached</em>.">
+  <div class="ga-num">03</div>
+  <div class="ga-label">Challenge I · The Gauntlet</div>
+  <div class="ga-sentence"><span class="bait">Having reviewed</span> the evidence <span class="bait">presented</span> by both sides, the tribunal reached a unanimous verdict.</div>
+  <div class="ga-q">Find the commander — the finite verb or verb phrase.</div>
+  <button class="ga-btn" onclick="revealGa(3)">Reveal the Commander →</button>
+  <div class="ga-reveal" id="ga3">
+    <div class="ga-rrow">
+      <div class="ga-rcol"><div class="rc-tag">Two Soldiers (bait)</div><div class="rc-bait">Having reviewed · presented</div></div>
+      <div class="ga-rcol"><div class="rc-tag">The Commander (tense)</div><div class="rc-verb">reached</div></div>
+    </div>
+    <div class="ga-rtext">Two soldiers in disguise. <em>Having reviewed</em> = perfect participle (a setup). <em>presented</em> = reduced relative (<em>that was presented</em>). Only <em>reached</em> carries tense.</div>
+  </div>
+</div>
+
+<!-- G4 -->
+<div class="slide" id="s10"
+  data-note-title="Gauntlet 04 — Participle + infinitive"
+  data-note-section="CHALLENGE 1"
+  data-note="Bait: <em>proposed</em> (p.p.) and <em>to curb</em> (infinitive of purpose). Real finite verb: <strong>remains</strong>.<br><br>Easy to overlook <em>remains</em> because it sits late and looks calm. That calmness is the camouflage.">
+  <div class="ga-num">04</div>
+  <div class="ga-label">Challenge I · The Gauntlet</div>
+  <div class="ga-sentence">The strategy <span class="bait">proposed</span> by the new administration <span class="bait">to curb</span> inflation remains deeply controversial.</div>
+  <div class="ga-q">Find the commander — the finite verb or verb phrase.</div>
+  <button class="ga-btn" onclick="revealGa(4)">Reveal the Commander →</button>
+  <div class="ga-reveal" id="ga4">
+    <div class="ga-rrow">
+      <div class="ga-rcol"><div class="rc-tag">Two Soldiers (bait)</div><div class="rc-bait">proposed · to curb</div></div>
+      <div class="ga-rcol"><div class="rc-tag">The Commander (tense)</div><div class="rc-verb">remains</div></div>
+    </div>
+    <div class="ga-rtext"><em>proposed</em> describes the strategy. <em>to curb</em> states purpose. Neither rules. <strong>remains</strong> is the throne — the finite verb.</div>
+  </div>
+</div>
+
+<!-- G5 — the technical heart -->
+<div class="slide" id="s11"
+  data-note-title="Gauntlet 05 — The finite verb PHRASE (the refinement)"
+  data-note-section="CHALLENGE 1 · KEY"
+  data-note="<strong>This is the most important sentence of the gauntlet.</strong> It teaches the refinement of the Oath.<br><br>Bait: <em>reconsider</em> (bare verb after a modal) and <em>underlying</em> (participle).<br><br>If a sharp student says 'reconsider' — they are HALF right. <em>'reconsider alone? No crown. The TENSE is carried by must. The finite verb PHRASE is must reconsider.'</em> This is the bridge straight into the Oath.">
+  <div class="ga-num">05</div>
+  <div class="ga-label">Challenge I · The Gauntlet</div>
+  <div class="ga-sentence">Researchers must <span class="bait">reconsider</span> the assumptions <span class="bait">underlying</span> the original model.</div>
+  <div class="ga-q">Find the commander — the finite verb or verb phrase.</div>
+  <button class="ga-btn" onclick="revealGa(5)">Reveal the Commander →</button>
+  <div class="ga-reveal" id="ga5">
+    <div class="ga-rrow">
+      <div class="ga-rcol"><div class="rc-tag">Soldiers (bait)</div><div class="rc-bait">reconsider · underlying</div></div>
+      <div class="ga-rcol"><div class="rc-tag">The Commander (tense)</div><div class="rc-verb">must reconsider</div></div>
+    </div>
+    <div class="ga-rtext"><em>reconsider</em> alone has <strong>no finite power</strong>. The finite modal auxiliary is <em>must</em>, and the full finite verb phrase is <em>must reconsider.</em> And <em>underlying</em> is a soldier describing the assumptions. <strong>A verbal can serve a verb phrase — never command alone.</strong></div>
+  </div>
+</div>
+
+<!-- G6 -->
+<div class="slide" id="s12"
+  data-note-title="Gauntlet 06 — Infinitive opener, full camouflage"
+  data-note-section="CHALLENGE 1"
+  data-note="Bait: <em>To understand</em> (infinitive opener) and <em>analysing</em> (participle). Real finite verb: <strong>have proposed</strong>.<br><br>Final one — hardest camouflage. After the reveal, transition: <em>'You all just felt it. A verb-shaped soldier fooled you. Now I give you the weapon so it never happens again. Hands on your chest.'</em>">
+  <div class="ga-num">06</div>
+  <div class="ga-label">Challenge I · The Gauntlet</div>
+  <div class="ga-sentence"><span class="bait">To understand</span> the crisis fully, economists <span class="bait">analysing</span> global trade patterns have proposed a new framework.</div>
+  <div class="ga-q">Find the commander — the finite verb or verb phrase.</div>
+  <button class="ga-btn" onclick="revealGa(6)">Reveal the Commander →</button>
+  <div class="ga-reveal" id="ga6">
+    <div class="ga-rrow">
+      <div class="ga-rcol"><div class="rc-tag">Two Soldiers (bait)</div><div class="rc-bait">To understand · analysing</div></div>
+      <div class="ga-rcol"><div class="rc-tag">The Commander (tense)</div><div class="rc-verb">have proposed</div></div>
+    </div>
+    <div class="ga-rtext"><em>To understand</em> opens with purpose — not the verb. <em>analysing</em> describes the economists. The tense-carrying commander is <em>have proposed.</em></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     PART II — THE OATH  (the teaching payoff)
+     ════════════════════════════════════════════════════════════ -->
+
+<!-- SLIDE 13 — THE OATH (five soldiers) -->
+<div class="slide" id="s13"
+  data-note-title="The NUVORI Verb Oath — the Five Soldiers"
+  data-note-section="THE OATH · CEREMONY"
+  data-note="<strong>Ritual moment. Hand on chest. Make them say it WITH you.</strong><br><br><em>'I swear that these five soldiers can never be the tense-carrying verb of a sentence alone.'</em><br><br>Walk the five, slowly, pointing at each on screen. Get them to repeat each name. They look like verbs. They come FROM verbs. But alone they cannot carry tense. <strong>They are verbals — not the main tense verb.</strong>">
+  <div class="oath-kicker">The NUVORI Verb Oath · Hand on Chest</div>
+  <div class="oath-h">Five Soldiers That Can <em>Never</em><br>Carry Tense Alone.</div>
+  <div class="oath-soldiers">
+    <div class="soldier"><div class="s-n">1</div><div><span class="s-name">Gerund</span><span class="s-ex">studying</span></div></div>
+    <div class="soldier"><div class="s-n">2</div><div><span class="s-name">Infinitive</span><span class="s-ex">to study</span></div></div>
+    <div class="soldier"><div class="s-n">3</div><div><span class="s-name">Present participle</span><span class="s-ex">studying</span></div></div>
+    <div class="soldier"><div class="s-n">4</div><div><span class="s-name">Past participle</span><span class="s-ex">studied · written · seen</span></div></div>
+    <div class="soldier"><div class="s-n">5</div><div><span class="s-name">Bare infinitive after a licensing verb / auxiliary</span><span class="s-ex">can go · must study · make them reconsider</span></div></div>
+  </div>
+  <div class="oath-chant">"No tense, no crown. No time, no throne.<br>A verbal can serve the sentence — but it cannot rule the sentence alone."</div>
+</div>
+
+<!-- SLIDE 14 — THE LAW + COMMANDER -->
+<div class="slide" id="s14"
+  data-note-title="The Law — Soldier vs Commander"
+  data-note-section="THE OATH · THE LAW"
+  data-note="<strong>Land the refinement (callback to Gauntlet 05).</strong><br><br><em>'A verbal CAN be part of a verb phrase — can speak, has written. But it can never be the finite, tense-carrying verb alone.'</em><br><br>In <em>She can speak English</em> — the power is in <em>can</em>; the finite phrase is <em>can speak</em>. In <em>She has written</em> — the tense is in <em>has</em>; the phrase is <em>has written</em>.<br><br>Close with the reflex: <em>'When you see studying, written, to improve, go — your brain shouts I FOUND THE VERB. NO. You found a verb-shaped soldier. Now hunt the tense-carrying commander.'</em>">
+  <div class="oath-kicker">The Law</div>
+  <div class="oath-h">A Verbal Serves the Phrase.<br>It Never <em>Rules Alone.</em></div>
+  <div class="cmd-row">
+    <div class="cmd-card soldier-c">
+      <div class="cc-tag">The Soldier</div>
+      <div class="cc-line">She has <em style="color:var(--red);font-style:italic;">written</em> the report.</div>
+      <div class="cc-sub"><em>written</em> alone carries no tense.</div>
+    </div>
+    <div class="cmd-card commander-c">
+      <div class="cc-tag">The Commander</div>
+      <div class="cc-line">The tense lives in <em style="color:var(--green);font-style:normal;">has</em>.</div>
+      <div class="cc-sub">Finite phrase: <em>has written.</em></div>
+    </div>
+  </div>
+  <div class="oath-law">
+    <div class="ol-tag">The Reflex to Build</div>
+    <div class="ol-text">You see <em>studying, written, to improve, go</em> — your brain shouts <strong>"I found the verb!"</strong> &nbsp;No. You found a <strong>verb-shaped soldier.</strong> Now find the <em>tense-carrying commander.</em></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     PART III — CHALLENGE 2  (verbal-focused MCQs · reflex)
+     ════════════════════════════════════════════════════════════ -->
+
+<!-- SLIDE 15 — CHALLENGE 2 DIVIDER -->
+<div class="slide" id="s15"
+  data-note-title="Challenge 2 — Setup"
+  data-note-section="CHALLENGE 2 · REFLEX"
+  data-note="<em>'Now the reflex meets a real exam item. In grammar, in translation, in cloze — the signal is hidden behind a soldier. Find the commander, find the answer.'</em><br><br>Same volunteer mechanic, or whole-room hands. Tap an option to lock it and reveal the autopsy.">
+  <div class="divider-slide">
+    <div class="div-ornament">— ◆ —</div>
+    <div class="div-title">Now, the <em>Exam.</em></div>
+    <div class="div-sub">Challenge II · Spot the Commander · Choose</div>
+    <div class="div-rule">Every trap here is built on a verbal in disguise.</div>
+  </div>
+</div>
+
+<!-- Q1 -->
+<div class="slide" id="s16"
+  data-note-title="MCQ 01 — The missing finite verb"
+  data-note-section="CHALLENGE 2"
+  data-note="The whole sentence is a subject (with two verbals: <em>conducted</em>, <em>working</em>) and NO finite verb yet. They must supply the commander. Trap options are verbals — <em>having demonstrated</em>, <em>to demonstrate</em>, <em>demonstrating</em> — none can rule. Only <strong>demonstrate</strong> (D) is finite & agrees with <em>experiments</em>.">
+  <div class="eq-label">Challenge II · Question 01</div>
+  <div class="eq-stem">The experiments <span class="bait">conducted</span> by the team <span class="bait">working</span> in isolation <span class="blank">————</span> a clear link between the two variables.</div>
+  <div class="eq-opts" id="q1opts">
+    <div class="eq-opt" onclick="selectQ(1,0)"><div class="ok">A</div><div class="ov">having demonstrated</div></div>
+    <div class="eq-opt" onclick="selectQ(1,1)"><div class="ok">B</div><div class="ov">to demonstrate</div></div>
+    <div class="eq-opt" onclick="selectQ(1,2)"><div class="ok">C</div><div class="ov">demonstrating</div></div>
+    <div class="eq-opt" onclick="selectQ(1,3)"><div class="ok">D</div><div class="ov">demonstrate</div></div>
+    <div class="eq-opt" onclick="selectQ(1,4)"><div class="ok">E</div><div class="ov">to have demonstrated</div></div>
+  </div>
+  <div class="eq-analysis" id="q1analysis">
+    <div class="eq-alabel">The Signal</div>
+    <div class="eq-atext">The sentence has two soldiers — <em>conducted</em> and <em>working</em> — but <strong>no commander yet</strong>. The blank must be the finite verb. <em>having demonstrated, to demonstrate, demonstrating, to have demonstrated</em> are all verbals — none can rule alone. Only <strong>demonstrate</strong> carries tense and agrees with <em>experiments.</em></div>
+  </div>
+  <button class="eq-btn" id="q1btn" onclick="nextSlide()">Next Question →</button>
+</div>
+
+<!-- Q2 -->
+<div class="slide" id="s17"
+  data-note-title="MCQ 02 — Bare verb after 'make'"
+  data-note-section="CHALLENGE 2"
+  data-note="Causative <em>make somebody DO</em> → bare infinitive. The verbals try to seduce: <em>to reconsider</em>, <em>reconsidering</em>. After <em>made the board</em>, the soldier must be bare: <strong>reconsider</strong> (B). Ties to Oath soldier #5.">
+  <div class="eq-label">Challenge II · Question 02</div>
+  <div class="eq-stem">The mounting public pressure made the board <span class="blank">————</span> its decision to close the historic library.</div>
+  <div class="eq-opts" id="q2opts">
+    <div class="eq-opt" onclick="selectQ(2,0)"><div class="ok">A</div><div class="ov">to reconsider</div></div>
+    <div class="eq-opt" onclick="selectQ(2,1)"><div class="ok">B</div><div class="ov">reconsider</div></div>
+    <div class="eq-opt" onclick="selectQ(2,2)"><div class="ok">C</div><div class="ov">reconsidering</div></div>
+    <div class="eq-opt" onclick="selectQ(2,3)"><div class="ok">D</div><div class="ov">reconsidered</div></div>
+    <div class="eq-opt" onclick="selectQ(2,4)"><div class="ok">E</div><div class="ov">to have reconsidered</div></div>
+  </div>
+  <div class="eq-analysis" id="q2analysis">
+    <div class="eq-alabel">The Signal</div>
+    <div class="eq-atext"><em>make somebody DO something</em> — the causative takes a <strong>bare verb</strong>, soldier #5. The tense already lives in <em>made.</em> So the blank cannot carry tense: not <em>to reconsider</em>, not <em>reconsidering.</em> Only the bare <strong>reconsider</strong> serves the phrase.</div>
+  </div>
+  <button class="eq-btn" id="q2btn" onclick="nextSlide()">Next Question →</button>
+</div>
+
+<!-- Q3 -->
+<div class="slide" id="s18"
+  data-note-title="MCQ 03 — Translation backbone (Find the Commander)"
+  data-note-section="CHALLENGE 2 · TRANSLATION"
+  data-note="Callback to your Translation Decoder. The English subject is heavy with verbals (<em>observed</em>, the long modifier). The commander is <em>has prompted → yöneltmiştir</em>. Correct = <strong>D</strong> (preserves subject + commander + time frame). This is the exact item from the Decoder doc, Stage F.">
+  <div class="eq-label">Challenge II · Question 03 · Translation</div>
+  <div class="eq-stem" style="font-size:30px;">The rapid decline in biodiversity <span class="bait">observed</span> in tropical regions over the past three decades has prompted international organisations to develop more comprehensive conservation strategies.</div>
+  <div class="eq-opts" id="q3opts" style="grid-template-columns:1fr;">
+    <div class="eq-opt" onclick="selectQ(3,0)" style="font-size:15px;"><div class="ok">A</div><div class="ov">Tropikal bölgelerde son otuz yılda gözlemlenen hızlı biyoçeşitlilik azalması, uluslararası kuruluşların daha kapsamlı koruma stratejileri geliştirmesini <em style="font-style:italic;color:var(--gold)">engelleyen</em> bir faktör olmuştur.</div></div>
+    <div class="eq-opt" onclick="selectQ(3,1)" style="font-size:15px;"><div class="ok">B</div><div class="ov">Son otuz yılda tropikal bölgelerde yaşanan biyoçeşitlilik kaybı <em style="font-style:italic;color:var(--gold)">nedeniyle</em> uluslararası kuruluşlar, koruma stratejilerini yeniden gözden geçirmek zorunda kalmıştır.</div></div>
+    <div class="eq-opt" onclick="selectQ(3,2)" style="font-size:15px;"><div class="ok">C</div><div class="ov">Tropikal bölgelerde gözlemlenen biyoçeşitlilik azalması, uluslararası kuruluşları <em style="font-style:italic;color:var(--gold)">son otuz yılda</em> daha kapsamlı koruma stratejileri oluşturmaya yöneltmiştir.</div></div>
+    <div class="eq-opt" onclick="selectQ(3,3)" style="font-size:15px;"><div class="ok">D</div><div class="ov">Son otuz yılda tropikal bölgelerde gözlemlenen hızlı biyoçeşitlilik azalması, uluslararası kuruluşları daha kapsamlı koruma stratejileri geliştirmeye yöneltmiştir.</div></div>
+    <div class="eq-opt" onclick="selectQ(3,4)" style="font-size:15px;"><div class="ok">E</div><div class="ov">Tropikal bölgelerde otuz yıl içinde gözlemlenen biyoçeşitlilik kaybı, uluslararası kuruluşların oluşturduğu kapsamlı koruma stratejilerinin bir <em style="font-style:italic;color:var(--gold)">sonucudur.</em></div></div>
+  </div>
+  <div class="eq-analysis" id="q3analysis">
+    <div class="eq-alabel">Find the Commander First</div>
+    <div class="eq-atext">Soldier: <em>observed</em> — it only describes the decline. Commander: <strong>has prompted → yöneltmiştir.</strong> Only one option preserves the subject (<em>the rapid decline</em>), the commander, the object (<em>organisations</em>), and the time frame in its right place — that is <strong>D</strong>. &nbsp;A reverses meaning (<em>engelleyen</em> = prevented). B turns the subject into a reason (<em>nedeniyle</em>). C misplaces the time frame. E inverts cause and effect.</div>
+  </div>
+  <button class="eq-btn" id="q3btn" onclick="nextSlide()">Part III →</button>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     PART IV — THE GAME  (copied; ice cream prize)
+     ════════════════════════════════════════════════════════════ -->
+
+<!-- SLIDE 19 — GAME DIVIDER -->
+<div class="slide" id="s19"
+  data-note-title="The Game — Setup"
+  data-note-section="THE GAME"
+  data-note="<strong>Energy back up. This is the closer.</strong><br><br><em>'Last game. Every sentence on screen LOOKS right. Not all of them are. Correct or Incorrect — you decide. Whoever reads like a designer wins the ice cream.'</em><br><br>Hands for each. Tap Correct/Incorrect to reveal. The score badge tracks the room. Callback the flavour from the open when someone wins.">
+  <div class="divider-slide">
+    <div class="div-ornament">— ◆ —</div>
+    <div class="div-title">The <em>Game.</em></div>
+    <div class="div-sub">Correct or Incorrect · 7 Sentences · Win an Ice Cream</div>
+    <div class="div-rule">Every sentence looks right. Not all of them are.</div>
+  </div>
+</div>
+
+<!-- GAME Q1 -->
+<div class="slide" id="s20"
+  data-note-title="Game 01 — Possessive has no antecedent (INCORRECT)"
+  data-note-section="THE GAME"
+  data-note="Answer: <strong>INCORRECT.</strong> <em>Diana's</em> is a possessive modifier, not a noun — so <em>her</em> has no noun to refer to. Fix: …good transportation for <em>Diana</em>.">
+  <div class="game-num">01</div>
+  <div class="game-label">Correct or Incorrect?</div>
+  <div class="game-sentence">Diana's bike is good transportation for her.</div>
+  <div class="verdict-row" id="g1btns">
+    <button class="vbtn vbtn-correct" onclick="revealGame(1, true)">✓ &nbsp; Correct</button>
+    <button class="vbtn vbtn-incorrect" onclick="revealGame(1, false)">✗ &nbsp; Incorrect</button>
+  </div>
+  <div class="reveal-panel" id="g1panel">
+    <div class="reveal-verdict v-wrong" id="g1verdict"></div>
+    <div class="reveal-trap"><strong>"Diana's"</strong> is a possessive modifier — not a noun. There is no noun "Diana" in the sentence. So <em>"her"</em> has no antecedent to refer back to. A possessive cannot serve as a pronoun referent in standard English. It must read: <strong>Diana's bike is good transportation for Diana.</strong></div>
+  </div>
+</div>
+
+<!-- GAME Q2 -->
+<div class="slide" id="s21"
+  data-note-title="Game 02 — 'It is high time' + past subjunctive (CORRECT)"
+  data-note-section="THE GAME"
+  data-note="Answer: <strong>CORRECT.</strong> <em>It is high time</em> takes the past subjunctive: <em>stopped</em>, not <em>stops</em>. Past form, present urgency. (Callback: ice cream treats!)">
+  <div class="game-num">02</div>
+  <div class="game-label">Correct or Incorrect?</div>
+  <div class="game-sentence">It is high time that Emre stopped postponing our ice cream treats.</div>
+  <div class="verdict-row" id="g2btns">
+    <button class="vbtn vbtn-correct" onclick="revealGame(2, true)">✓ &nbsp; Correct</button>
+    <button class="vbtn vbtn-incorrect" onclick="revealGame(2, false)">✗ &nbsp; Incorrect</button>
+  </div>
+  <div class="reveal-panel" id="g2panel">
+    <div class="reveal-verdict v-correct" id="g2verdict"></div>
+    <div class="reveal-trap"><em>"It is high time"</em> requires the <strong>past subjunctive</strong> in the that-clause. <strong>"stopped"</strong> — not "stops" — is correct. The past tense here does not point to the past; it signals urgency: the action is overdue. Most students write "stops" and lose the mark.</div>
+  </div>
+</div>
+
+<!-- GAME Q3 -->
+<div class="slide" id="s22"
+  data-note-title="Game 03 — Fronted adjective (CORRECT)"
+  data-note-section="THE GAME"
+  data-note="Answer: <strong>CORRECT.</strong> A fronted adjective modifying the subject — literary but valid. Full form: <em>The operation, which was painless, took…</em>">
+  <div class="game-num">03</div>
+  <div class="game-label">Correct or Incorrect?</div>
+  <div class="game-sentence">Painless, the operation took only ten minutes.</div>
+  <div class="verdict-row" id="g3btns">
+    <button class="vbtn vbtn-correct" onclick="revealGame(3, true)">✓ &nbsp; Correct</button>
+    <button class="vbtn vbtn-incorrect" onclick="revealGame(3, false)">✗ &nbsp; Incorrect</button>
+  </div>
+  <div class="reveal-panel" id="g3panel">
+    <div class="reveal-verdict v-correct" id="g3verdict"></div>
+    <div class="reveal-trap">A fronted adjective modifying the subject — classical literary syntax. Full form: <em>"The operation, which was painless, took only ten minutes."</em> The adjective <strong>"Painless"</strong> correctly refers to "the operation." <strong>Some correct sentences look unusual because they are formal or literary</strong> — odd is not the same as wrong.</div>
+  </div>
+</div>
+
+<!-- GAME Q4 -->
+<div class="slide" id="s23"
+  data-note-title="Game 04 — Dangling participle (INCORRECT)"
+  data-note-section="THE GAME"
+  data-note="Answer: <strong>INCORRECT.</strong> Dangling participle — <em>Published</em> must attach to the subject, but the subject is <em>the writer</em>. The writer wasn't published; the novel was. Ties straight to the Oath: a participle is a soldier that must serve the right master.">
+  <div class="game-num">04</div>
+  <div class="game-label">Correct or Incorrect?</div>
+  <div class="game-sentence">Published ahead of schedule, the writer could sell thousands of copies of his novel.</div>
+  <div class="verdict-row" id="g4btns">
+    <button class="vbtn vbtn-correct" onclick="revealGame(4, true)">✓ &nbsp; Correct</button>
+    <button class="vbtn vbtn-incorrect" onclick="revealGame(4, false)">✗ &nbsp; Incorrect</button>
+  </div>
+  <div class="reveal-panel" id="g4panel">
+    <div class="reveal-verdict v-wrong" id="g4verdict"></div>
+    <div class="reveal-trap"><strong>Dangling participle.</strong> <em>"Published"</em> must refer to the subject of the main clause — but the subject is <strong>"the writer."</strong> The writer was not published. The novel was. Correct: <em>"Published ahead of schedule, his novel sold thousands of copies."</em> The thing published must be the subject.</div>
+  </div>
+</div>
+
+<!-- GAME Q5 -->
+<div class="slide" id="s24"
+  data-note-title="Game 05 — Inverted Type 2 conditional (CORRECT)"
+  data-note-section="THE GAME"
+  data-note="Answer: <strong>CORRECT.</strong> Inverted conditional, main clause first: <em>were I you</em> = <em>if I were you</em>. The 'if' drops, subject-aux invert. Looks wrong twice; correct twice.">
+  <div class="game-num">05</div>
+  <div class="game-label">Correct or Incorrect?</div>
+  <div class="game-sentence">I would help the boy selling flowers were I you.</div>
+  <div class="verdict-row" id="g5btns">
+    <button class="vbtn vbtn-correct" onclick="revealGame(5, true)">✓ &nbsp; Correct</button>
+    <button class="vbtn vbtn-incorrect" onclick="revealGame(5, false)">✗ &nbsp; Incorrect</button>
+  </div>
+  <div class="reveal-panel" id="g5panel">
+    <div class="reveal-verdict v-correct" id="g5verdict"></div>
+    <div class="reveal-trap"><strong>Type 2 Conditional — inverted, main clause first.</strong> Standard: <em>"If I were you, I would help…"</em> Advanced: <em>"I would help… were I you"</em> — the if-clause moves to the end, "if" is dropped, subject-auxiliary invert. Both the position and the inversion look wrong. Both are correct formal English.</div>
+  </div>
+</div>
+
+<!-- GAME Q6 -->
+<div class="slide" id="s25"
+  data-note-title="Game 06 — Pronoun ambiguity (INCORRECT)"
+  data-note-section="THE GAME"
+  data-note="Answer: <strong>INCORRECT.</strong> <em>them</em> could be the folders OR the papers — two valid antecedents. Proximity is not a guarantee; ambiguous reference is a structural error.">
+  <div class="game-num">06</div>
+  <div class="game-label">Correct or Incorrect?</div>
+  <div class="game-sentence">The journalist opened the folders, removed the papers, and threw them out.</div>
+  <div class="verdict-row" id="g6btns">
+    <button class="vbtn vbtn-correct" onclick="revealGame(6, true)">✓ &nbsp; Correct</button>
+    <button class="vbtn vbtn-incorrect" onclick="revealGame(6, false)">✗ &nbsp; Incorrect</button>
+  </div>
+  <div class="reveal-panel" id="g6panel">
+    <div class="reveal-verdict v-wrong" id="g6verdict"></div>
+    <div class="reveal-trap"><strong>Pronoun ambiguity.</strong> <em>"Them"</em> could refer to <strong>the folders</strong> or <strong>the papers</strong> — both grammatically valid. The reader assumes "papers" by proximity, but the sentence does not guarantee it. In standard written English an ambiguous pronoun reference is a structural error regardless of implied meaning.</div>
+  </div>
+</div>
+
+<!-- GAME Q7 -->
+<div class="slide" id="s26"
+  data-note-title="Game 07 — Pronoun ambiguity, two people (INCORRECT)"
+  data-note-section="THE GAME"
+  data-note="Answer: <strong>INCORRECT.</strong> <em>she</em> = Tuana or Zeynep? Both valid. The sentence cannot confirm who is overjoyed. That uncertainty is the error.<br><br>After this, jump to the result slide. Award the ice cream. Close warm.">
+  <div class="game-num">07</div>
+  <div class="game-label">Correct or Incorrect?</div>
+  <div class="game-sentence">When Tuana ran into Zeynep in the street after a long time, she was overjoyed.</div>
+  <div class="verdict-row" id="g7btns">
+    <button class="vbtn vbtn-correct" onclick="revealGame(7, true)">✓ &nbsp; Correct</button>
+    <button class="vbtn vbtn-incorrect" onclick="revealGame(7, false)">✗ &nbsp; Incorrect</button>
+  </div>
+  <div class="reveal-panel" id="g7panel">
+    <div class="reveal-verdict v-wrong" id="g7verdict"></div>
+    <div class="reveal-trap"><strong>Pronoun ambiguity.</strong> <em>"She"</em> could refer to <strong>Tuana</strong> or <strong>Zeynep</strong> — both grammatically valid. We feel it means Tuana, but the sentence cannot confirm it. Who is happy here? The sentence does not know. That is the error.</div>
+  </div>
+</div>
+
+<!-- SLIDE 27 — RESULT -->
+<div class="slide" id="s27"
+  data-note-title="Result & Close"
+  data-note-section="CLOSE"
+  data-note="Score appears automatically. <strong>Award the ice cream</strong> to the highest reader.<br><br>Closing line: <em>'Today you stopped reading like a student and started reading like a designer. You found the signal. You found the commander. Keep filling the bucket — and the exam becomes a game you already know the rules to.'</em><br><br>Thank Gazi Anadolu Lisesi by name.">
+  <div class="result-wrap">
+    <div style="font-size:11px;letter-spacing:5px;color:var(--muted);text-transform:uppercase;margin-bottom:40px;">Designer Reflex Score</div>
+    <div><span class="result-score" id="finalScore">0</span><span class="result-denom"> / 7</span></div>
+    <div class="result-label">Designer Reflex · GAZİ ANADOLU LİSESİ · 04.06.2026</div>
+    <div class="result-msg" id="finalMsg"></div>
+  </div>
+</div>
+
+<!-- SPEAKER NOTES OVERLAY -->
+<div id="notes">
+  <div class="n-head" id="nSection">SPEAKER NOTES</div>
+  <div class="n-slidetitle" id="nTitle"></div>
+  <div class="n-body" id="nBody"></div>
+  <div class="n-foot">N = close notes · ← → still navigate slides underneath</div>
+</div>
+
+<script>
+// ——— SLIDE ENGINE ———
+const slides = document.querySelectorAll('.slide');
+const total = slides.length;
+let cur = 0;
+
+// section break indices (visual separators in the dot rail): after Open(4), after Turn/Gauntlet, etc.
+const sectionBreaks = [4, 14, 18]; // dots get a divider before these slide indices
+
+const dotsEl = document.getElementById('dots');
+slides.forEach((_, i) => {
+  if (sectionBreaks.includes(i)) {
+    const sep = document.createElement('div');
+    sep.className = 'dot section';
+    dotsEl.appendChild(sep);
+  }
+  const d = document.createElement('div');
+  d.className = 'dot' + (i === 0 ? ' active' : '');
+  d.dataset.idx = i;
+  d.onclick = () => goTo(i);
+  dotsEl.appendChild(d);
+});
+function activeDots() { return Array.from(dotsEl.querySelectorAll('.dot:not(.section)')); }
+
+function goTo(n) {
+  slides[cur].classList.remove('active');
+  activeDots()[cur].classList.remove('active');
+  cur = Math.max(0, Math.min(total - 1, n));
+  slides[cur].classList.add('active');
+  activeDots()[cur].classList.add('active');
+  document.getElementById('counter').textContent = (cur + 1) + ' / ' + total;
+  document.getElementById('progress').style.width = ((cur + 1) / total * 100) + '%';
+  // Score badge during the game (slides 19–25, the 7 game questions)
+  const sb = document.getElementById('scoreBadge');
+  if (cur >= 19 && cur <= 25) {
+    sb.textContent = 'SCORE · ' + gameScore + ' / ' + (cur - 19 + 1);
+    sb.classList.add('show');
+  } else { sb.classList.remove('show'); }
+  // refresh notes if open
+  if (document.getElementById('notes').classList.contains('show')) renderNotes();
+}
+function nextSlide() { goTo(cur + 1); }
+
+// ——— SPEAKER NOTES ———
+function renderNotes() {
+  const s = slides[cur];
+  document.getElementById('nSection').textContent = s.dataset.noteSection || 'SPEAKER NOTES';
+  document.getElementById('nTitle').textContent = s.dataset.noteTitle || ('Slide ' + (cur + 1));
+  document.getElementById('nBody').innerHTML = s.dataset.note || '<em>No notes for this slide.</em>';
+}
+function toggleNotes() {
+  const n = document.getElementById('notes');
+  if (n.classList.contains('show')) { n.classList.remove('show'); }
+  else { renderNotes(); n.classList.add('show'); }
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'n' || e.key === 'N') { e.preventDefault(); toggleNotes(); return; }
+  if (['ArrowRight','ArrowDown',' '].includes(e.key)) { e.preventDefault(); goTo(cur + 1); }
+  if (['ArrowLeft','ArrowUp'].includes(e.key)) { e.preventDefault(); goTo(cur - 1); }
+});
+
+let tx = 0;
+document.addEventListener('touchstart', e => tx = e.touches[0].clientX);
+document.addEventListener('touchend', e => {
+  const dx = e.changedTouches[0].clientX - tx;
+  if (Math.abs(dx) > 50) goTo(cur + (dx < 0 ? 1 : -1));
+});
+
+// ——— GAUNTLET REVEAL ———
+function revealGa(n) {
+  const panel = document.getElementById('ga' + n);
+  if (panel) panel.classList.add('show');
+  const btn = panel.previousElementSibling;
+  if (btn && btn.classList.contains('ga-btn')) btn.style.opacity = '0.3';
+}
+// Reveal gauntlet panels also on arrow-right if not yet shown (so one tap shows answer, next advances)
+// Keep simple: button reveals; arrow advances slide.
+
+// ——— CHALLENGE 2 MCQ LOGIC ———
+const answers = { 1: 3, 2: 1, 3: 3 }; // 0-indexed correct option (D, B, D)
+function selectQ(qnum, chosen) {
+  const opts = document.querySelectorAll(`#q${qnum}opts .eq-opt`);
+  const correct = answers[qnum];
+  opts.forEach((o, i) => {
+    o.onclick = null;
+    o.classList.add('revealed');
+    if (i === correct) o.classList.add('correct');
+    else o.classList.add('wrong');
+  });
+  document.getElementById(`q${qnum}analysis`).classList.add('show');
+  document.getElementById(`q${qnum}btn`).classList.add('show');
+}
+
+// ——— GAME LOGIC ———
+const gameAnswers = { 1: false, 2: true, 3: true, 4: false, 5: true, 6: false, 7: false };
+const gameMessages = {
+  0: "The traps were perfectly set.", 1: "1 out of 7. The sentences did their job.",
+  2: "2 out of 7. A good start.", 3: "3 out of 7. Halfway there.",
+  4: "4 out of 7. Above average.", 5: "5 out of 7. Strong instincts.",
+  6: "6 out of 7. Exceptional. One trap caught you.",
+  7: "7 out of 7. You read like a test designer."
+};
+let gameScore = 0;
+const gameAnswered = {};
+
+function revealGame(qnum, userSaidCorrect) {
+  if (gameAnswered[qnum]) return;
+  gameAnswered[qnum] = true;
+  const isCorrect = gameAnswers[qnum];
+  const userRight = (userSaidCorrect === isCorrect);
+  if (userRight) gameScore++;
+  const btns = document.querySelectorAll(`#g${qnum}btns .vbtn`);
+  btns.forEach(b => b.disabled = true);
+  const chosenBtn = document.querySelector(`#g${qnum}btns .vbtn-${userSaidCorrect ? 'correct' : 'incorrect'}`);
+  if (userRight) {
+    chosenBtn.style.background = userSaidCorrect ? 'var(--green)' : 'var(--red)';
+    chosenBtn.style.color = 'var(--dark)';
+  } else {
+    chosenBtn.style.opacity = '0.3';
+    const correctBtn = document.querySelector(`#g${qnum}btns .vbtn-${isCorrect ? 'correct' : 'incorrect'}`);
+    correctBtn.style.background = isCorrect ? 'var(--green)' : 'var(--red)';
+    correctBtn.style.color = 'var(--dark)';
+  }
+  const panel = document.getElementById(`g${qnum}panel`);
+  const verdict = document.getElementById(`g${qnum}verdict`);
+  panel.classList.add('show');
+  if (isCorrect) { verdict.className = 'reveal-verdict v-correct'; verdict.textContent = '✓ Correct'; }
+  else { verdict.className = 'reveal-verdict v-wrong'; verdict.textContent = '✗ Incorrect'; }
+  document.getElementById('scoreBadge').textContent = 'SCORE · ' + gameScore + ' / ' + qnum;
+  if (qnum === 7) {
+    setTimeout(() => {
+      document.getElementById('finalScore').textContent = gameScore;
+      document.getElementById('finalMsg').innerHTML = gameMessages[gameScore] || '';
+    }, 400);
+  }
+}
+
+// Init
+document.getElementById('progress').style.width = (1 / total * 100) + '%';
+document.getElementById('counter').textContent = '1 / ' + total;
+</script>
+</body>
+</html>
